@@ -253,7 +253,7 @@ pub fn parse_record(rec: &[u8], names: &mut Vec<u16>) -> Option<Parsed> {
             _ => {}
         }
     }
-    p.extra_links = non_dos_names.saturating_sub(1);
+    p.extra_links = if p.base != 0 { non_dos_names } else { non_dos_names.saturating_sub(1) };
     if let Some(c) = best {
         p.parent = u64_at(c, 0)? & 0xFFFF_FFFF_FFFF;
         p.attrs = u32_at(c, 0x38)?;
