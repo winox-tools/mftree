@@ -98,6 +98,7 @@ fn run(args: &Args, letter: char) -> std::io::Result<()> {
         eprintln!("open:             {:?}", t.open);
         eprintln!("read VBR:         {:?}", t.read_vbr);
         eprintln!("read rec0:        {:?}", t.read_rec0);
+        eprintln!("read rec0 (rep):  {:?}", t.read_rec0_repeat);
         eprintln!("parse rec0:       {:?}", t.parse_rec0);
         eprintln!("I/O (wait):       {:?}", t.io_wait);
         eprintln!("parse:            {:?}", t.parse);

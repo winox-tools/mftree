@@ -17,6 +17,7 @@ pub struct Timings {
     pub open: Duration,
     pub read_vbr: Duration,
     pub read_rec0: Duration,
+    pub read_rec0_repeat: Duration,
     pub parse_rec0: Duration,
     pub io_wait: Duration,
     pub parse: Duration,
@@ -63,6 +64,10 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
         return Err(err("failed to read MFT record 0"));
     }
     timings.read_rec0 = t.elapsed();
+
+    let t = Instant::now();
+    vol.read_at(boot.mft_lcn.saturating_mul(boot.cluster_size), &mut rec0, read_len)?;
+    timings.read_rec0_repeat = t.elapsed();
 
     let t = Instant::now();
     let rec0 = &mut rec0.as_mut_slice()[..rs];
