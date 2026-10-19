@@ -85,13 +85,16 @@ mod tests {
     #[test]
     fn tree_walks_by_path() {
         let s = sample();
-        let rows = s.tree("C:\\A", 2, 10).unwrap();
+        let rows = s.tree("C:\\A", 2, 10, true).unwrap();
         let got: Vec<_> = rows.iter().map(|r| (r.path.as_str(), r.size, r.depth)).collect();
         assert_eq!(
             got,
             [("C:\\a", 150, 0), ("C:\\a\\f.txt", 100, 1), ("C:\\a\\b", 50, 1), ("C:\\a\\b\\g.bin", 50, 2)]
         );
-        assert!(s.tree("C:\\nope", 1, 10).is_none());
+        assert!(s.tree("C:\\nope", 1, 10, true).is_none());
+        let full = s.tree("C:\\", usize::MAX, usize::MAX, false).unwrap();
+        assert_eq!(full.len(), 5);
+        assert_eq!(full[2].path, "f.txt");
     }
 
     #[test]
@@ -105,6 +108,12 @@ mod tests {
 
 /// The `n` largest (size, index) pairs in descending size order.
 fn top_n(items: impl Iterator<Item = (u64, usize)>, n: usize) -> Vec<(u64, usize)> {
+    if n >= 4096 {
+        let mut v: Vec<_> = items.collect();
+        v.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        v.truncate(n);
+        return v;
+    }
     let mut heap: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::with_capacity(n + 1);
     for (size, i) in items {
         if heap.len() < n {
@@ -247,12 +256,13 @@ impl Store {
     }
 
     /// Tree from `path`: the `n` largest children per level, no deeper than `depth`.
-    pub fn tree(&self, path: &str, depth: usize, n: usize) -> Option<Vec<Row>> {
+    /// Without `full_paths`, children carry only the name in `path` (saves memory on large trees).
+    pub fn tree(&self, path: &str, depth: usize, n: usize, full_paths: bool) -> Option<Vec<Row>> {
         let sizes = self.dir_sizes();
         let children = self.children_index();
         let root = self.resolve(path, &children)?;
         let mut rows = Vec::new();
-        self.walk(root, 0, depth, n, &sizes, &children, &mut rows);
+        self.walk(root, 0, depth, n, full_paths, &sizes, &children, &mut rows);
         Some(rows)
     }
 
@@ -263,6 +273,7 @@ impl Store {
         level: usize,
         max_depth: usize,
         n: usize,
+        full_paths: bool,
         sizes: &[u64],
         children: &Children,
         rows: &mut Vec<Row>,
@@ -270,7 +281,12 @@ impl Store {
         let e = &self.entries[idx];
         let is_dir = idx == ROOT_FRN || e.state & IS_DIR != 0;
         let size = if is_dir { sizes[idx] } else { e.size };
-        rows.push(Row { path: self.path_of(idx), size, is_dir, depth: level });
+        let path = if level == 0 || full_paths {
+            self.path_of(idx)
+        } else {
+            String::from_utf16_lossy(self.name(e))
+        };
+        rows.push(Row { path, size, is_dir, depth: level });
         if !is_dir || level >= max_depth {
             return;
         }
@@ -280,7 +296,7 @@ impl Store {
             (if k.state & IS_DIR != 0 { sizes[c] } else { k.size }, c)
         });
         for (_, c) in top_n(kids, n) {
-            self.walk(c, level + 1, max_depth, n, sizes, children, rows);
+            self.walk(c, level + 1, max_depth, n, full_paths, sizes, children, rows);
         }
     }
 

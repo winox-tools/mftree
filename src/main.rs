@@ -42,6 +42,14 @@ struct Args {
     #[arg(long, default_value_t = 2)]
     depth: usize,
 
+    /// For --tree: full depth and all children (ignores --depth and --top)
+    #[arg(long)]
+    full: bool,
+
+    /// Write the result to a file (UTF-8) instead of the console
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<String>,
+
     /// Output format
     #[arg(long, value_enum, default_value_t = Format::Table)]
     format: Format,
@@ -90,7 +98,10 @@ fn run(args: &Args, letter: char) -> std::io::Result<()> {
 
     let t = Instant::now();
     let rows = if let Some(path) = &args.tree {
-        res.store.tree(path, args.depth, args.top).ok_or_else(|| {
+        let (depth, per_level) =
+            if args.full { (usize::MAX, usize::MAX) } else { (args.depth, args.top) };
+        let full_paths = !matches!(args.format, Format::Table);
+        res.store.tree(path, depth, per_level, full_paths).ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, format!("path not found: {path}"))
         })?
     } else if args.dirs {
@@ -104,7 +115,10 @@ fn run(args: &Args, letter: char) -> std::io::Result<()> {
     };
     let resolve = t.elapsed();
 
-    output::print(&rows, args.format)?;
+    match &args.output {
+        Some(file) => output::print(&rows, args.format, std::fs::File::create(file)?)?,
+        None => output::print(&rows, args.format, std::io::stdout().lock())?,
+    }
 
     if args.benchmark {
         let t = &res.timings;

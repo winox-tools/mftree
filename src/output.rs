@@ -45,8 +45,8 @@ fn csv_escape(s: &str) -> String {
     }
 }
 
-pub fn print(rows: &[Row], format: Format) -> io::Result<()> {
-    let mut out = io::BufWriter::new(io::stdout().lock());
+pub fn print(rows: &[Row], format: Format, sink: impl Write) -> io::Result<()> {
+    let mut out = io::BufWriter::with_capacity(1 << 20, sink);
     match format {
         Format::Table => {
             writeln!(out, "{:>12}  {:<4} {}", "SIZE", "TYPE", "PATH")?;
