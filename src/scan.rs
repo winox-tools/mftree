@@ -28,6 +28,10 @@ pub struct ScanResult {
     pub store: Store,
     pub records: u64,
     pub extra_links: u64,
+    /// Base records with `$ATTRIBUTE_LIST` that have no `$FILE_NAME` in the record itself.
+    pub attr_list_nameless: u64,
+    /// Extension records that contain `$FILE_NAME`.
+    pub ext_with_names: u64,
     pub timings: Timings,
 }
 
@@ -87,6 +91,8 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
     let mut entries = vec![FileEntry::default(); total_records];
     let mut names: Vec<u16> = Vec::with_capacity(total_records * 12);
     let mut extra_links: u64 = 0;
+    let mut attr_list_nameless: u64 = 0;
+    let mut ext_with_names: u64 = 0;
     let bps = boot.bytes_per_sector as usize;
 
     let (tx, rx) = sync_channel::<Chunk>(POOL);
@@ -109,7 +115,11 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
 
             let t = Instant::now();
             for b in &batches {
-                extra_links += b.items.iter().map(|(_, p)| p.extra_links as u64).sum::<u64>();
+                for (_, p) in &b.items {
+                    extra_links += p.extra_links as u64;
+                    attr_list_nameless += (p.base == 0 && p.has_attr_list && !p.has_name) as u64;
+                    ext_with_names += (p.base != 0 && p.has_name) as u64;
+                }
                 merge(&mut entries, &mut names, b);
             }
             timings.merge += t.elapsed();
@@ -124,6 +134,8 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
         store: Store { entries, names, drive },
         records: total_records as u64,
         extra_links,
+        attr_list_nameless,
+        ext_with_names,
         timings,
     })
 }

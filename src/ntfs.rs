@@ -2,6 +2,7 @@
 
 pub const ATTR_FILE_NAME: u32 = 0x30;
 pub const ATTR_DATA: u32 = 0x80;
+const ATTR_ATTRIBUTE_LIST: u32 = 0x20;
 const ATTR_END: u32 = 0xFFFF_FFFF;
 const FLAG_IN_USE: u16 = 0x01;
 const FLAG_DIR: u16 = 0x02;
@@ -203,6 +204,7 @@ pub struct Parsed {
     pub attrs: u32,
     /// Number of additional (non-DOS) names of the record, i.e. hard links.
     pub extra_links: u32,
+    pub has_attr_list: bool,
 }
 
 /// Parses a record after fixup; the name is appended to `names`.
@@ -221,6 +223,7 @@ pub fn parse_record(rec: &[u8], names: &mut Vec<u16>) -> Option<Parsed> {
     let mut non_dos_names: u32 = 0;
     for a in attrs(rec) {
         match a.kind {
+            ATTR_ATTRIBUTE_LIST => p.has_attr_list = true,
             ATTR_FILE_NAME if !a.non_resident() => {
                 let Some(c) = a.resident_content() else { continue };
                 let (Some(&n), Some(&ns)) = (c.get(0x40), c.get(0x41)) else { continue };
@@ -268,7 +271,7 @@ pub fn parse_record(rec: &[u8], names: &mut Vec<u16>) -> Option<Parsed> {
         );
         p.has_name = true;
     }
-    if !p.has_name && !p.has_size && p.base == 0 {
+    if !p.has_name && !p.has_size && !p.has_attr_list && p.base == 0 {
         return None;
     }
     Some(p)
