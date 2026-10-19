@@ -46,7 +46,7 @@ pub fn scan(vol: &Volume, drive: char) -> io::Result<ScanResult> {
     let mut timings = Timings::default();
 
     let mut sector = AlignedBuf::new(4096);
-    vol.read_at(0, &mut sector, 512)?;
+    vol.read_at(0, &mut sector, 4096)?;
     let boot = ntfs::parse_boot(sector.as_slice()).map_err(err)?;
     let rs = boot.record_size;
 

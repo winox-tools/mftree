@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+use rayon::prelude::*;
 use regex::Regex;
 
 pub const HAS_NAME: u8 = 1;
@@ -118,15 +119,21 @@ impl Store {
             .ok();
         let needle = pattern.to_lowercase();
         let mut hits: Vec<(u64, usize)> = (0..self.entries.len())
+            .into_par_iter()
             .filter(|&i| self.visible(i))
-            .filter(|&i| {
-                let name = String::from_utf16_lossy(self.name(&self.entries[i]));
-                match &re {
-                    Some(re) => re.is_match(&name),
-                    None => name.to_lowercase().contains(&needle),
-                }
+            .map_init(String::new, |buf, i| {
+                buf.clear();
+                buf.extend(
+                    char::decode_utf16(self.name(&self.entries[i]).iter().copied())
+                        .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER)),
+                );
+                let matched = match &re {
+                    Some(re) => re.is_match(buf),
+                    None => buf.to_lowercase().contains(&needle),
+                };
+                matched.then(|| (self.entries[i].size, i))
             })
-            .map(|i| (self.entries[i].size, i))
+            .flatten()
             .collect();
         hits.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
         hits.truncate(n);
@@ -150,7 +157,8 @@ impl Store {
                 end += 1;
             }
             if end - start > 1 {
-                groups.push((size * (end - start - 1) as u64, &pairs[start..end]));
+                let wasted = size.saturating_mul((end - start - 1) as u64);
+                groups.push((wasted, &pairs[start..end]));
             }
             start = end;
         }
