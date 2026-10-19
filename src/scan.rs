@@ -14,7 +14,10 @@ const RECORDS_PER_TASK: usize = 512;
 
 #[derive(Default)]
 pub struct Timings {
-    pub setup: Duration,
+    pub open: Duration,
+    pub read_vbr: Duration,
+    pub read_rec0: Duration,
+    pub parse_rec0: Duration,
     pub io_wait: Duration,
     pub parse: Duration,
     pub merge: Duration,
@@ -41,32 +44,39 @@ fn err(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg.to_string())
 }
 
-pub fn scan(vol: &Volume, drive: char) -> io::Result<ScanResult> {
-    let t0 = Instant::now();
-    let mut timings = Timings::default();
+pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<ScanResult> {
+    let mut timings = Timings { open: open_duration, ..Default::default() };
 
+    let t = Instant::now();
     let mut sector = AlignedBuf::new(4096);
     vol.read_at(0, &mut sector, 4096)?;
+    timings.read_vbr = t.elapsed();
+
     let boot = ntfs::parse_boot(sector.as_slice()).map_err(err)?;
     let rs = boot.record_size;
 
-    let mut rec0 = AlignedBuf::new(rs.next_multiple_of(boot.bytes_per_sector as usize));
+    let t = Instant::now();
     let read_len = rs.next_multiple_of(boot.bytes_per_sector as usize);
+    let mut rec0 = AlignedBuf::new(read_len);
     let got = vol.read_at(boot.mft_lcn.saturating_mul(boot.cluster_size), &mut rec0, read_len)?;
     if got < rs {
         return Err(err("failed to read MFT record 0"));
     }
+    timings.read_rec0 = t.elapsed();
+
+    let t = Instant::now();
     let rec0 = &mut rec0.as_mut_slice()[..rs];
     if !ntfs::apply_fixup(rec0) {
         return Err(err("$MFT record 0 is corrupt"));
     }
     let (extents, mft_size) =
         ntfs::mft_extents(rec0, boot.cluster_size).ok_or_else(|| err("$MFT has no $DATA attribute"))?;
+    timings.parse_rec0 = t.elapsed();
+
     let total_records = (mft_size / rs as u64) as usize;
     if total_records == 0 || total_records > u32::MAX as usize {
         return Err(err("invalid $MFT size"));
     }
-    timings.setup = t0.elapsed();
 
     let mut entries = vec![FileEntry::default(); total_records];
     let mut names: Vec<u16> = Vec::with_capacity(total_records * 12);

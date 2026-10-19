@@ -71,8 +71,10 @@ fn main() -> ExitCode {
 
 fn run(args: &Args, letter: char) -> std::io::Result<()> {
     let total = Instant::now();
+    let t_open = Instant::now();
     let vol = volume::Volume::open(letter)?;
-    let res = scan::scan(&vol, letter)?;
+    let open_duration = t_open.elapsed();
+    let res = scan::scan(&vol, letter, open_duration)?;
 
     let t = Instant::now();
     let rows = if args.duplicates {
@@ -92,7 +94,11 @@ fn run(args: &Args, letter: char) -> std::io::Result<()> {
         eprintln!("--- benchmark ---");
         eprintln!("MFT records:     {}", res.records);
         eprintln!("named entries:   {named}");
-        eprintln!("setup (VBR/rec0): {:?}", t.setup);
+        eprintln!("peak RAM:         {}", output::human(volume::peak_memory_bytes() as u64));
+        eprintln!("open:             {:?}", t.open);
+        eprintln!("read VBR:         {:?}", t.read_vbr);
+        eprintln!("read rec0:        {:?}", t.read_rec0);
+        eprintln!("parse rec0:       {:?}", t.parse_rec0);
         eprintln!("I/O (wait):       {:?}", t.io_wait);
         eprintln!("parse:            {:?}", t.parse);
         eprintln!("merge:            {:?}", t.merge);

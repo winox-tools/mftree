@@ -10,6 +10,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, SetFilePointerEx, FILE_BEGIN, FILE_FLAG_NO_BUFFERING,
     FILE_FLAG_SEQUENTIAL_SCAN, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
+use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 const GENERIC_READ: u32 = 0x8000_0000;
@@ -113,6 +114,18 @@ impl Volume {
 impl Drop for Volume {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.handle) };
+    }
+}
+
+pub fn peak_memory_bytes() -> usize {
+    unsafe {
+        let mut pmc: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+        let cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        if GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc, cb) != 0 {
+            pmc.PeakWorkingSetSize
+        } else {
+            0
+        }
     }
 }
 
