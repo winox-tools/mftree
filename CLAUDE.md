@@ -29,4 +29,5 @@ Reads the raw NTFS volume (`\\.\C:`, `FILE_FLAG_NO_BUFFERING`) and parses `$MFT`
 
 - Parsing code handles untrusted disk bytes: no `unwrap`/direct indexing on record data; use the bounds-checked `u16_at`/`u32_at`/`u64_at` helpers and return `None` for corrupt records.
 - File size comes from the unnamed `$DATA` attribute; `$FILE_NAME` size is only a fallback because it is often stale. DOS (8.3) names are used only if no other name exists.
+- Folder sizes are not stored: `Store::dir_sizes` rolls file sizes up the parent chain on demand (`--dirs`, `--tree PATH --depth N`); each file counts once under its best name, so hard links are not double-counted. The tree uses a lazily built CSR children index.
 - `-t/--top` also caps `--search` results, and for `--duplicates` it counts groups, not files.

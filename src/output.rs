@@ -52,7 +52,16 @@ pub fn print(rows: &[Row], format: Format) -> io::Result<()> {
             writeln!(out, "{:>12}  {:<4} {}", "SIZE", "TYPE", "PATH")?;
             for r in rows {
                 let kind = if r.is_dir { "DIR" } else { "FILE" };
-                writeln!(out, "{:>12}  {:<4} {}", human(r.size), kind, r.path)?;
+                let label = match r.depth {
+                    0 => r.path.as_str(),
+                    d => {
+                        let name = r.path.rsplit('\\').next().unwrap_or(&r.path);
+                        write!(out, "{:>12}  {:<4} {}", human(r.size), kind, "  ".repeat(d))?;
+                        writeln!(out, "{name}")?;
+                        continue;
+                    }
+                };
+                writeln!(out, "{:>12}  {:<4} {}", human(r.size), kind, label)?;
             }
         }
         Format::Json => {

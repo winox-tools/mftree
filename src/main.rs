@@ -30,6 +30,18 @@ struct Args {
     #[arg(short, long, default_value_t = 20)]
     top: usize,
 
+    /// Show the top N largest folders (including nested content)
+    #[arg(long)]
+    dirs: bool,
+
+    /// Tree from the given folder (for example, C:\Users), top N at each level
+    #[arg(long, value_name = "PATH")]
+    tree: Option<String>,
+
+    /// Depth for --tree
+    #[arg(long, default_value_t = 2)]
+    depth: usize,
+
     /// Output format
     #[arg(long, value_enum, default_value_t = Format::Table)]
     format: Format,
@@ -77,7 +89,13 @@ fn run(args: &Args, letter: char) -> std::io::Result<()> {
     let res = scan::scan(&vol, letter, open_duration)?;
 
     let t = Instant::now();
-    let rows = if args.duplicates {
+    let rows = if let Some(path) = &args.tree {
+        res.store.tree(path, args.depth, args.top).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, format!("path not found: {path}"))
+        })?
+    } else if args.dirs {
+        res.store.top_dirs(args.top)
+    } else if args.duplicates {
         res.store.duplicates(args.top)
     } else if let Some(pattern) = &args.search {
         res.store.search(pattern, args.top)
