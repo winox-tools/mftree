@@ -93,7 +93,9 @@ fn run(args: &Args, letter: char) -> std::io::Result<()> {
         let named = res.store.entries.iter().filter(|e| e.state & store::HAS_NAME != 0).count();
         eprintln!("--- benchmark ---");
         eprintln!("MFT records:     {}", res.records);
-        eprintln!("named entries:   {named}");
+        let dirs = res.store.entries.iter().filter(|e| e.state & store::IS_DIR != 0 && e.state & store::HAS_NAME != 0).count();
+        eprintln!("named entries:   {named} (dirs {dirs}, files {})", named - dirs);
+        eprintln!("extra hard links: {}", res.extra_links);
         eprintln!("peak RAM:         {}", output::human(volume::peak_memory_bytes() as u64));
         eprintln!("open:             {:?}", t.open);
         eprintln!("read VBR:         {:?}", t.read_vbr);

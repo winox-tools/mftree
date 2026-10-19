@@ -201,6 +201,8 @@ pub struct Parsed {
     pub name_off: u32,
     pub name_len: u16,
     pub attrs: u32,
+    /// Number of additional (non-DOS) names of the record, i.e. hard links.
+    pub extra_links: u32,
 }
 
 /// Parses a record after fixup; the name is appended to `names`.
@@ -216,6 +218,7 @@ pub fn parse_record(rec: &[u8], names: &mut Vec<u16>) -> Option<Parsed> {
     };
     let mut best_ns = u8::MAX;
     let mut best: Option<&[u8]> = None;
+    let mut non_dos_names: u32 = 0;
     for a in attrs(rec) {
         match a.kind {
             ATTR_FILE_NAME if !a.non_resident() => {
@@ -223,6 +226,9 @@ pub fn parse_record(rec: &[u8], names: &mut Vec<u16>) -> Option<Parsed> {
                 let (Some(&n), Some(&ns)) = (c.get(0x40), c.get(0x41)) else { continue };
                 // Priority: Win32/Win32+DOS/POSIX over DOS (2).
                 let rank = if ns == 2 { 1 } else { 0 };
+                if rank == 0 {
+                    non_dos_names += 1;
+                }
                 if rank < best_ns {
                     best_ns = rank;
                     best = c.get(..0x42 + n as usize * 2);
@@ -244,6 +250,7 @@ pub fn parse_record(rec: &[u8], names: &mut Vec<u16>) -> Option<Parsed> {
             _ => {}
         }
     }
+    p.extra_links = non_dos_names.saturating_sub(1);
     if let Some(c) = best {
         p.parent = u64_at(c, 0)? & 0xFFFF_FFFF_FFFF;
         p.attrs = u32_at(c, 0x38)?;

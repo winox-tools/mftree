@@ -27,6 +27,7 @@ pub struct Timings {
 pub struct ScanResult {
     pub store: Store,
     pub records: u64,
+    pub extra_links: u64,
     pub timings: Timings,
 }
 
@@ -85,6 +86,7 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
 
     let mut entries = vec![FileEntry::default(); total_records];
     let mut names: Vec<u16> = Vec::with_capacity(total_records * 12);
+    let mut extra_links: u64 = 0;
     let bps = boot.bytes_per_sector as usize;
 
     let (tx, rx) = sync_channel::<Chunk>(POOL);
@@ -107,6 +109,7 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
 
             let t = Instant::now();
             for b in &batches {
+                extra_links += b.items.iter().map(|(_, p)| p.extra_links as u64).sum::<u64>();
                 merge(&mut entries, &mut names, b);
             }
             timings.merge += t.elapsed();
@@ -120,6 +123,7 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
     Ok(ScanResult {
         store: Store { entries, names, drive },
         records: total_records as u64,
+        extra_links,
         timings,
     })
 }
