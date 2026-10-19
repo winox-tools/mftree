@@ -1,16 +1,16 @@
 # AGENTS.md
 
-Usage guide for `mft-scan`, a CLI scanner for NTFS volumes that reads `$MFT` directly. Windows and NTFS only.
+Usage guide for `mftree`, a CLI scanner for NTFS volumes that reads `$MFT` directly. Windows and NTFS only.
 
 ## Requirements
 
 - Must run from an **elevated PowerShell/cmd**. Without admin rights it prints `Administrator privileges required (elevated shell)` and exits with code `1`. An agent without elevation cannot scan a volume: do not try to work around it, ask the user to run the command and send the output.
-- Build: `cargo build --release`; binary: `target\release\mft-scan.exe`.
+- Build: `cargo build --release`; binary: `target\release\mftree.exe`.
 
 ## Syntax
 
 ```
-mft-scan.exe <VOLUME> [options]
+mftree.exe <VOLUME> [options]
 ```
 
 `<VOLUME>` is a drive letter: `C:`, `C`, `D:\`.
@@ -35,19 +35,19 @@ Mode precedence when several are given: `--tree` > `--dirs` > `--duplicates` > `
 
 ```powershell
 # largest files on the disk
-mft-scan.exe C: -t 50
+mftree.exe C: -t 50
 
 # what takes the space: top-level folders and their contents
-mft-scan.exe C: --tree C:\ --depth 2 -t 15
+mftree.exe C: --tree C:\ --depth 2 -t 15
 
 # full tree to a file
-mft-scan.exe C: --tree C:\ --full -o tree.txt
+mftree.exe C: --tree C:\ --full -o tree.txt
 
 # regex search, machine-readable output
-mft-scan.exe C: -s "\.vhdx?$" -t 100 --format json -o found.json
+mftree.exe C: -s "\.vhdx?$" -t 100 --format json -o found.json
 
 # duplicates by size
-mft-scan.exe C: -d -t 30 --format csv
+mftree.exe C: -d -t 30 --format csv
 ```
 
 ## Output format
@@ -80,14 +80,14 @@ mft-scan.exe C: -d -t 30 --format csv
 
 # Development
 
-For anyone changing the `mft-scan` code.
+For anyone changing the `mftree` code.
 
 ## Commands
 
 - Build: `cargo build --release`
 - All tests: `cargo test --release`; single test: `cargo test --release ntfs::tests::fixup_mismatch`
 - Lint: `cargo clippy --release`
-- Run: `.\target\release\mft-scan.exe C: --benchmark -t 20` — must run from an **elevated** shell. The volume scan cannot be exercised from a non-elevated session, only the unit tests in `src/ntfs.rs` and `src/store.rs`.
+- Run: `.\target\release\mftree.exe C: --benchmark -t 20` — must run from an **elevated** shell. The volume scan cannot be exercised from a non-elevated session, only the unit tests in `src/ntfs.rs` and `src/store.rs`.
 
 ## Conventions
 

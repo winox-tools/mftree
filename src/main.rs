@@ -13,7 +13,7 @@ use windows_sys::Win32::System::Console::SetConsoleOutputCP;
 use output::Format;
 
 #[derive(Parser)]
-#[command(name = "mft-scan", about = "Fast NTFS volume scanner that parses $MFT directly")]
+#[command(name = "mftree",about = "Fast NTFS volume scanner that parses $MFT directly")]
 struct Args {
     /// Drive letter to scan (for example, C:, D:)
     volume: String,
