@@ -7,7 +7,7 @@ use windows_sys::Win32::Security::{
     GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, SetFilePointerEx, FILE_BEGIN, FILE_FLAG_NO_BUFFERING,
+    CreateFileW, GetDiskFreeSpaceExW, ReadFile, SetFilePointerEx, FILE_BEGIN, FILE_FLAG_NO_BUFFERING,
     FILE_FLAG_SEQUENTIAL_SCAN, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
@@ -115,6 +115,14 @@ impl Drop for Volume {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.handle) };
     }
+}
+
+/// Total and free bytes of the volume, or None if the query fails.
+pub fn disk_space(letter: char) -> Option<(u64, u64)> {
+    let root: Vec<u16> = format!("{letter}:\\").encode_utf16().chain(Some(0)).collect();
+    let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
+    let ok = unsafe { GetDiskFreeSpaceExW(root.as_ptr(), &mut avail, &mut total, &mut free) };
+    (ok != 0).then_some((total, free))
 }
 
 pub fn peak_memory_bytes() -> usize {

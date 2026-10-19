@@ -58,7 +58,10 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
     vol.read_at(0, &mut sector, 4096)?;
     timings.read_vbr = t.elapsed();
 
-    let boot = ntfs::parse_boot(sector.as_slice()).map_err(err)?;
+    let boot = ntfs::parse_boot(sector.as_slice()).map_err(|m| {
+        let kind = if m == ntfs::NOT_NTFS { io::ErrorKind::Unsupported } else { io::ErrorKind::InvalidData };
+        io::Error::new(kind, m)
+    })?;
     let rs = boot.record_size;
 
     let t = Instant::now();
@@ -131,7 +134,7 @@ pub fn scan(vol: &Volume, drive: char, open_duration: Duration) -> io::Result<Sc
     io_result?;
 
     Ok(ScanResult {
-        store: Store { entries, names, drive },
+        store: Store { entries, names, drive, hidden: Vec::new(), min_size: 0 },
         records: total_records as u64,
         extra_links,
         attr_list_nameless,

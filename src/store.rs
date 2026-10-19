@@ -4,6 +4,8 @@ use std::collections::BinaryHeap;
 use rayon::prelude::*;
 use regex::Regex;
 
+use crate::filter::Matcher;
+
 pub const HAS_NAME: u8 = 1;
 pub const IS_DIR: u8 = 2;
 pub const HAS_SIZE: u8 = 4;
@@ -28,6 +30,17 @@ pub struct Store {
     pub entries: Vec<FileEntry>,
     pub names: Vec<u16>,
     pub drive: char,
+    /// Entries removed from every query by `--exclude`/`--exclude-meta`; empty means none.
+    pub hidden: Vec<bool>,
+    /// Entries smaller than this are left out of the result lists (`--min-size`).
+    pub min_size: u64,
+}
+
+pub struct Summary {
+    pub files: u64,
+    pub dirs: u64,
+    pub files_size: u64,
+    pub top_roots: Vec<Row>,
 }
 
 pub struct Row {
@@ -72,7 +85,7 @@ mod tests {
         add(7, "f.txt", 6, 100, false);
         add(8, "b", 6, 0, true);
         add(9, "g.bin", 8, 50, false);
-        Store { entries, names, drive: 'C' }
+        Store { entries, names, drive: 'C', hidden: Vec::new(), min_size: 0 }
     }
 
     #[test]
@@ -95,6 +108,37 @@ mod tests {
         let full = s.tree("C:\\", usize::MAX, usize::MAX, false).unwrap();
         assert_eq!(full.len(), 5);
         assert_eq!(full[2].path, "f.txt");
+    }
+
+    #[test]
+    fn exclusions_and_min_size() {
+        let mut s = sample();
+        s.apply_exclusions(&[crate::filter::parse_pattern("b").unwrap()], false);
+        assert_eq!(s.dir_sizes()[6], 100);
+        s.min_size = 101;
+        assert!(s.top(10).is_empty());
+
+        // Metafile hiding only touches root-level `$...` and `System Volume Information`.
+        let mut s = sample();
+        let off = s.names.len() as u32;
+        s.names.extend("$Extend".encode_utf16());
+        s.entries[6].name_off = off;
+        s.entries[6].name_len = 7;
+        s.apply_exclusions(&[], true);
+        assert_eq!(s.dir_sizes()[5], 0);
+        assert!(!s.visible(6) && !s.visible(7));
+
+        let mut s = sample();
+        s.apply_exclusions(&[], true);
+        assert_eq!(s.dir_sizes()[5], 150);
+    }
+
+    #[test]
+    fn summary_counts() {
+        let s = sample().summary(5);
+        assert_eq!((s.files, s.dirs, s.files_size), (2, 2, 150));
+        assert_eq!(s.top_roots.len(), 1);
+        assert_eq!(s.top_roots[0].size, 150);
     }
 
     #[test]
@@ -137,7 +181,68 @@ impl Store {
     }
 
     fn visible(&self, idx: usize) -> bool {
-        idx != ROOT_FRN && self.entries[idx].state & HAS_NAME != 0
+        idx != ROOT_FRN
+            && self.entries[idx].state & HAS_NAME != 0
+            && !self.hidden.get(idx).copied().unwrap_or(false)
+    }
+
+    /// Hides entries matching `patterns` (and everything below them); with `hide_meta`, also the
+    /// NTFS metafiles in the volume root (`$MFT`, `$LogFile`, `$Recycle.Bin`, `System Volume Information`).
+    pub fn apply_exclusions(&mut self, patterns: &[Matcher], hide_meta: bool) {
+        if patterns.is_empty() && !hide_meta {
+            return;
+        }
+        let children = self.children_index();
+        let need_path = patterns.iter().any(Matcher::needs_path);
+        let mut hidden = vec![false; self.entries.len()];
+        let mut stack = vec![(ROOT_FRN, format!("{}:", self.drive), false)];
+        while let Some((idx, path, inherited)) = stack.pop() {
+            let mut hide = inherited;
+            if idx != ROOT_FRN && !hide {
+                let name = String::from_utf16_lossy(self.name(&self.entries[idx]));
+                let in_root = self.entries[idx].parent as usize == ROOT_FRN;
+                hide = (hide_meta
+                    && in_root
+                    && (name.starts_with('$') || name.eq_ignore_ascii_case("System Volume Information")))
+                    || patterns.iter().any(|m| m.is_match(&name, &path));
+            }
+            hidden[idx] = hide;
+            for &c in children.of(idx) {
+                let c = c as usize;
+                let child_path = if need_path {
+                    format!("{path}\\{}", String::from_utf16_lossy(self.name(&self.entries[c])))
+                } else {
+                    String::new()
+                };
+                stack.push((c, child_path, hide));
+            }
+        }
+        self.hidden = hidden;
+    }
+
+    pub fn summary(&self, roots: usize) -> Summary {
+        let sizes = self.dir_sizes();
+        let children = self.children_index();
+        let (mut files, mut dirs, mut files_size) = (0u64, 0u64, 0u64);
+        for i in (0..self.entries.len()).filter(|&i| self.visible(i)) {
+            if self.entries[i].state & IS_DIR != 0 {
+                dirs += 1;
+            } else {
+                files += 1;
+                files_size = files_size.saturating_add(self.entries[i].size);
+            }
+        }
+        let kids = children
+            .of(ROOT_FRN)
+            .iter()
+            .map(|&c| c as usize)
+            .filter(|&c| self.entries[c].state & IS_DIR != 0)
+            .map(|c| (sizes[c], c));
+        let top_roots = top_n(kids, roots)
+            .into_iter()
+            .map(|(size, i)| Row { size, ..self.row(i) })
+            .collect();
+        Summary { files, dirs, files_size, top_roots }
     }
 
     /// Builds the full path from leaf to root; a broken chain is marked with `?`.
@@ -248,7 +353,8 @@ impl Store {
         let sizes = self.dir_sizes();
         let dirs = (0..self.entries.len())
             .filter(|&i| self.visible(i) && self.entries[i].state & IS_DIR != 0)
-            .map(|i| (sizes[i], i));
+            .map(|i| (sizes[i], i))
+            .filter(|&(s, _)| s >= self.min_size);
         top_n(dirs, n)
             .into_iter()
             .map(|(size, i)| Row { size, ..self.row(i) })
@@ -294,7 +400,8 @@ impl Store {
             let c = c as usize;
             let k = &self.entries[c];
             (if k.state & IS_DIR != 0 { sizes[c] } else { k.size }, c)
-        });
+        })
+        .filter(|&(s, _)| s >= self.min_size);
         for (_, c) in top_n(kids, n) {
             self.walk(c, level + 1, max_depth, n, full_paths, sizes, children, rows);
         }
@@ -306,7 +413,10 @@ impl Store {
     }
 
     pub fn top(&self, n: usize) -> Vec<Row> {
-        let files = self.files().map(|i| (self.entries[i].size, i));
+        let files = self
+            .files()
+            .map(|i| (self.entries[i].size, i))
+            .filter(|&(s, _)| s >= self.min_size);
         top_n(files, n).into_iter().map(|(_, i)| self.row(i)).collect()
     }
 
@@ -328,7 +438,7 @@ impl Store {
                     Some(re) => re.is_match(buf),
                     None => buf.to_lowercase().contains(&needle),
                 };
-                matched.then(|| (self.entries[i].size, i))
+                (matched && self.entries[i].size >= self.min_size).then(|| (self.entries[i].size, i))
             })
             .flatten()
             .collect();
@@ -342,7 +452,7 @@ impl Store {
         let mut pairs: Vec<(u64, usize)> = self
             .files()
             .map(|i| (self.entries[i].size, i))
-            .filter(|&(s, _)| s > 0)
+            .filter(|&(s, _)| s > 0 && s >= self.min_size)
             .collect();
         pairs.sort_unstable();
         let mut groups: Vec<(u64, &[(u64, usize)])> = Vec::new();

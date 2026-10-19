@@ -20,6 +20,8 @@ pub fn u64_at(b: &[u8], o: usize) -> Option<u64> {
     Some(u64::from_le_bytes(b.get(o..o.checked_add(8)?)?.try_into().ok()?))
 }
 
+pub const NOT_NTFS: &str = "not an NTFS volume";
+
 pub struct Boot {
     pub bytes_per_sector: u32,
     pub cluster_size: u64,
@@ -29,7 +31,7 @@ pub struct Boot {
 
 pub fn parse_boot(sector: &[u8]) -> Result<Boot, &'static str> {
     if sector.get(3..11) != Some(b"NTFS    ") {
-        return Err("not an NTFS volume");
+        return Err(NOT_NTFS);
     }
     let bps = u16_at(sector, 0x0B).ok_or("corrupt VBR")? as u32;
     let spc = *sector.get(0x0D).ok_or("corrupt VBR")? as u64;

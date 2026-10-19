@@ -1,9 +1,11 @@
+mod filter;
 mod ntfs;
 mod output;
 mod scan;
 mod store;
 mod volume;
 
+use std::io::ErrorKind;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -12,8 +14,9 @@ use windows_sys::Win32::System::Console::SetConsoleOutputCP;
 
 use output::Format;
 
+/// Exit codes: 0 ok, 1 not elevated, 2 volume/path not found or not NTFS (or bad arguments), 3 I/O error.
 #[derive(Parser)]
-#[command(name = "mftree",about = "Fast NTFS volume scanner that parses $MFT directly")]
+#[command(name = "mftree", about = "Fast NTFS volume scanner that parses $MFT directly")]
 struct Args {
     /// Drive letter to scan (for example, C:, D:)
     volume: String,
@@ -26,8 +29,8 @@ struct Args {
     #[arg(short, long)]
     duplicates: bool,
 
-    /// Show the top N largest files
-    #[arg(short, long, default_value_t = 20)]
+    /// Limit the output to N entries (files, folders, duplicate groups, tree children per level)
+    #[arg(short, long, visible_alias = "limit", default_value_t = 20)]
     top: usize,
 
     /// Show the top N largest folders (including nested content)
@@ -39,12 +42,29 @@ struct Args {
     tree: Option<String>,
 
     /// Depth for --tree
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, visible_alias = "max-depth", default_value_t = 2)]
     depth: usize,
 
     /// For --tree: full depth and all children (ignores --depth and --top)
     #[arg(long)]
     full: bool,
+
+    /// Skip entries smaller than SIZE (for example, 500KB, 100MB, 1GB)
+    #[arg(long, value_name = "SIZE")]
+    min_size: Option<String>,
+
+    /// Hide paths matching PATTERN and everything below them; repeatable. A glob (`C:\Windows\*`,
+    /// `*.tmp`), `re:<regex>`, a folder/file name (`.git`) or a path prefix (`C:\Windows`)
+    #[arg(long, value_name = "PATTERN")]
+    exclude: Vec<String>,
+
+    /// Hide NTFS metafiles in the volume root ($MFT, $LogFile, $Recycle.Bin, System Volume Information)
+    #[arg(long, visible_alias = "hide-system")]
+    exclude_meta: bool,
+
+    /// Print a volume summary instead of a file list
+    #[arg(long)]
+    summary: bool,
 
     /// Write the result to a file (UTF-8) instead of the console
     #[arg(short, long, value_name = "FILE")]
@@ -54,9 +74,22 @@ struct Args {
     #[arg(long, value_enum, default_value_t = Format::Table)]
     format: Format,
 
-    /// Print per-stage timings
+    /// Shortcut for --format json
+    #[arg(long)]
+    json: bool,
+
+    /// JSON on a single line, without formatting (implies --json)
+    #[arg(long)]
+    json_compact: bool,
+
+    /// Print per-stage timings to stderr
     #[arg(long)]
     benchmark: bool,
+}
+
+fn usage_error(msg: &str) -> ExitCode {
+    eprintln!("mftree: error: {msg}");
+    ExitCode::from(2)
 }
 
 fn main() -> ExitCode {
@@ -71,61 +104,110 @@ fn main() -> ExitCode {
         .filter(|c| c.is_ascii_alphabetic())
         .map(|c| c.to_ascii_uppercase())
     else {
-        eprintln!("Invalid drive letter: {}", args.volume);
-        return ExitCode::from(2);
+        return usage_error(&format!("invalid drive letter: {}", args.volume));
+    };
+
+    let min_size = match args.min_size.as_deref().map(filter::parse_size).transpose() {
+        Ok(v) => v.unwrap_or(0),
+        Err(e) => return usage_error(&e),
+    };
+    let patterns = match args.exclude.iter().map(|p| filter::parse_pattern(p)).collect::<Result<Vec<_>, _>>() {
+        Ok(v) => v,
+        Err(e) => return usage_error(&e),
     };
 
     if !volume::is_elevated() {
-        eprintln!("Administrator privileges required (elevated shell)");
+        eprintln!("mftree: error: Administrator privileges required (elevated shell)");
         return ExitCode::from(1);
     }
 
-    match run(&args, letter) {
+    match run(&args, letter, min_size, &patterns) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("Error: {e}");
-            ExitCode::from(2)
+            eprintln!("mftree: error: {e}");
+            ExitCode::from(match e.kind() {
+                ErrorKind::NotFound | ErrorKind::Unsupported => 2,
+                _ => 3,
+            })
         }
     }
 }
 
-fn run(args: &Args, letter: char) -> std::io::Result<()> {
+fn run(args: &Args, letter: char, min_size: u64, patterns: &[filter::Matcher]) -> std::io::Result<()> {
     let total = Instant::now();
     let t_open = Instant::now();
     let vol = volume::Volume::open(letter)?;
     let open_duration = t_open.elapsed();
-    let res = scan::scan(&vol, letter, open_duration)?;
+    let mut res = scan::scan(&vol, letter, open_duration)?;
+    res.store.min_size = min_size;
+    res.store.apply_exclusions(patterns, args.exclude_meta);
+
+    let (format, compact) = if args.json_compact {
+        (Format::Json, true)
+    } else if args.json {
+        (Format::Json, false)
+    } else {
+        (args.format, false)
+    };
 
     let t = Instant::now();
-    let rows = if let Some(path) = &args.tree {
-        let (depth, per_level) =
-            if args.full { (usize::MAX, usize::MAX) } else { (args.depth, args.top) };
-        let full_paths = !matches!(args.format, Format::Table);
-        res.store.tree(path, depth, per_level, full_paths).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, format!("path not found: {path}"))
-        })?
-    } else if args.dirs {
-        res.store.top_dirs(args.top)
-    } else if args.duplicates {
-        res.store.duplicates(args.top)
-    } else if let Some(pattern) = &args.search {
-        res.store.search(pattern, args.top)
-    } else {
-        res.store.top(args.top)
+    let mut sink: Box<dyn std::io::Write> = match &args.output {
+        Some(file) => Box::new(std::fs::File::create(file)?),
+        None => Box::new(std::io::stdout().lock()),
     };
-    let resolve = t.elapsed();
-
-    match &args.output {
-        Some(file) => output::print(&rows, args.format, std::fs::File::create(file)?)?,
-        None => output::print(&rows, args.format, std::io::stdout().lock())?,
+    if args.summary {
+        let s = res.store.summary(5);
+        let (vol_total, vol_free) = volume::disk_space(letter).unzip();
+        let tm = &res.timings;
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+        output::print_summary(
+            &output::SummaryOut {
+                volume: format!("{letter}:"),
+                total: vol_total,
+                free: vol_free,
+                files: s.files,
+                dirs: s.dirs,
+                files_size: s.files_size,
+                top_roots: &s.top_roots,
+                mft_read_ms: ms(tm.read_vbr + tm.read_rec0 + tm.io_wait),
+                parse_ms: ms(tm.parse + tm.merge),
+            },
+            format,
+            compact,
+            &mut sink,
+        )?;
+    } else {
+        let rows = if let Some(path) = &args.tree {
+            let (depth, per_level) =
+                if args.full { (usize::MAX, usize::MAX) } else { (args.depth, args.top) };
+            let full_paths = !matches!(format, Format::Table);
+            res.store.tree(path, depth, per_level, full_paths).ok_or_else(|| {
+                std::io::Error::new(ErrorKind::NotFound, format!("path not found: {path}"))
+            })?
+        } else if args.dirs {
+            res.store.top_dirs(args.top)
+        } else if args.duplicates {
+            res.store.duplicates(args.top)
+        } else if let Some(pattern) = &args.search {
+            res.store.search(pattern, args.top)
+        } else {
+            res.store.top(args.top)
+        };
+        output::print(&rows, format, compact, &mut sink)?;
     }
+    let resolve = t.elapsed();
 
     if args.benchmark {
         let t = &res.timings;
         let named = res.store.entries.iter().filter(|e| e.state & store::HAS_NAME != 0).count();
+        let dirs = res
+            .store
+            .entries
+            .iter()
+            .filter(|e| e.state & store::IS_DIR != 0 && e.state & store::HAS_NAME != 0)
+            .count();
         eprintln!("--- benchmark ---");
         eprintln!("MFT records:     {}", res.records);
-        let dirs = res.store.entries.iter().filter(|e| e.state & store::IS_DIR != 0 && e.state & store::HAS_NAME != 0).count();
         eprintln!("named entries:   {named} (dirs {dirs}, files {})", named - dirs);
         eprintln!("extra hard links: {}", res.extra_links);
         eprintln!("attr_list without base name: {}", res.attr_list_nameless);
