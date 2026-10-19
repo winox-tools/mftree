@@ -2,6 +2,12 @@
 name = "mftree"
 version = "0.1.0"
 edition = "2021"
+description = "Fast NTFS volume scanner that parses the $MFT directly: top files and folders, tree, search, JSON/CSV output"
+license = "MIT"
+repository = "https://github.com/winox-tools/mftree"
+readme = "README.md"
+keywords = ["ntfs", "mft", "disk-usage", "windows", "cli"]
+categories = ["command-line-utilities", "filesystem"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -19,5 +25,6 @@ windows-sys = { version = "0.59", features = [
 
 [profile.release]
 opt-level = 3
-lto = "fat"
+lto = true
 codegen-units = 1
+strip = true

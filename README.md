@@ -8,9 +8,11 @@ On the author's machine (NVMe SSD, ~3.5M MFT records, ~2.4M named entries) a ful
 
 - Top-N largest files and folders (folder sizes include everything nested)
 - Directory tree from any folder, up to the full tree of the volume
+- Volume summary (`--summary`): size, used, free, counts, top root folders
 - Search by name (case-insensitive regex, falls back to substring)
 - Duplicate candidates grouped by file size
-- Output as table, JSON or CSV, to the console or a UTF-8 file
+- Filters: `--min-size`, `--exclude` (glob, regex, name or path prefix), `--exclude-meta`
+- Script-friendly: table, JSON (pretty or `--json-compact`) or CSV; only data on stdout, messages on stderr, distinct exit codes
 
 ## Requirements
 
@@ -53,16 +55,58 @@ mftree.exe C: --benchmark
 
 | Option | Description |
 |---|---|
-| `-t, --top <N>` | Number of results (default 20); children per level with `--tree`; groups with `-d` |
+| `-t, --top <N>`, `--limit <N>` | Number of results (default 20); children per level with `--tree`; groups with `-d` |
 | `--dirs` | Largest folders |
-| `--tree <PATH>`, `--depth <N>`, `--full` | Directory tree; `--full` ignores depth and the per-level limit |
+| `--summary` | Volume summary instead of a list |
+| `--tree <PATH>`, `--depth <N>` (`--max-depth`), `--full` | Directory tree; `--full` ignores depth and the per-level limit |
 | `-s, --search <PATTERN>` | Search by name |
 | `-d, --duplicates` | Files with equal sizes |
-| `--format <table\|json\|csv>` | Output format (default `table`) |
+| `--min-size <SIZE>` | Skip entries smaller than `500KB`, `100MB`, `1.5GB`, ... |
+| `--exclude <PATTERN>` | Hide a path and everything below it (repeatable): glob such as `C:\Windows\*`, `re:<regex>`, a name such as `.git`, or a path prefix |
+| `--exclude-meta` (`--hide-system`) | Hide NTFS metafiles in the volume root (`$MFT`, `$LogFile`, `$Recycle.Bin`, `System Volume Information`) |
+| `--format <table\|json\|csv>`, `--json`, `--json-compact` | Output format (default `table`) |
 | `-o, --output <FILE>` | Write to a file instead of the console |
 | `--benchmark` | Timings, peak RAM and record counters on stderr |
 
-See [AGENTS.md](AGENTS.md) for the full reference, output formats and exit codes.
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Not running as administrator |
+| 2 | Volume or `--tree` path not found, not an NTFS volume, or invalid arguments |
+| 3 | I/O error while reading the raw volume |
+
+Only data is written to stdout; messages and errors go to stderr, so `mftree.exe C: --json | jq ...` is safe. See [AGENTS.md](AGENTS.md) for the full reference and the JSON shapes.
+
+## Using it in scripts
+
+```powershell
+# PowerShell: warn about folders larger than 5 GB
+$big = mftree.exe C: --dirs --min-size 5GB -t 50 --json | ConvertFrom-Json
+$big | ForEach-Object { Write-Warning ("{0:N1} GB  {1}" -f ($_.size / 1GB), $_.path) }
+
+# bash + jq: the 10 duplicate-size groups with the most wasted space, grouped by size
+mftree.exe D: -d -t 10 --json-compact | jq 'group_by(.size) | map({size: .[0].size, count: length, paths: map(.path)})'
+
+# CI: free the build cache when the disk is more than 90% full
+$s = mftree.exe C: --summary --json-compact | ConvertFrom-Json
+if ($s.used_bytes / $s.total_bytes -gt 0.9) { Remove-Item -Recurse -Force C:\build-cache }
+
+# big files outside .git and NTFS metafiles, as CSV
+mftree.exe D: --min-size 1GB --exclude .git --exclude-meta -t 100 --format csv -o big.csv
+```
+
+## Benchmark
+
+Measured on the author's machine, one NVMe system volume with ~3.5M MFT records and ~2.4M named entries:
+
+| Tool | How it reads the disk | Scan time | Output |
+|---|---|---|---|
+| mftree | `$MFT` directly | ~1.7 s (scan plus printing the top 20) | CLI, open source |
+| WizTree 4.31 | `$MFT` directly | 4.56 s (scan, builds the full GUI tree) | GUI |
+
+The two do different amounts of work (WizTree builds a complete interactive tree), so this is a rough comparison, not a like-for-like benchmark. Numbers for directory-walking tools (PowerShell `Get-ChildItem`, `dust`, `ncdu`) have not been measured yet and are intentionally not listed.
 
 ## How it works
 

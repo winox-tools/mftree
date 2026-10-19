@@ -18,18 +18,23 @@ mftree.exe <VOLUME> [options]
 | Option | What it does |
 |---|---|
 | (none) | top-N largest files |
-| `-t, --top <N>` | N results (default 20); with `--tree`, children per level; with `-d`, number of groups |
+| `-t, --top <N>`, `--limit <N>` | N results (default 20); with `--tree`, children per level; with `-d`, number of groups |
 | `--dirs` | top-N folders by size, including everything nested |
+| `--summary` | volume summary instead of a list: size, used, free, file and folder counts, top-5 root folders, MFT read and parse times |
 | `--tree <PATH>` | tree from a folder (`C:\Users`, `\Users`, `""` for the root), case-insensitive |
-| `--depth <N>` | depth for `--tree` (default 2) |
+| `--depth <N>`, `--max-depth <N>` | depth for `--tree` (default 2) |
+| `--min-size <SIZE>` | skip entries smaller than SIZE: `500KB`, `100MB`, `1.5GB`, plain bytes (units are powers of 1024) |
+| `--exclude <PATTERN>` | hide a path and everything below it; repeatable. A glob (`C:\Windows\*`, `*.tmp`), `re:<regex>` (matched against the full path), a name without separators (`.git`, matches any entry with that name), or a path prefix (`C:\Windows`). Case-insensitive |
+| `--exclude-meta`, `--hide-system` | hide NTFS metafiles in the volume root: `$MFT`, `$LogFile`, `$Recycle.Bin`, `System Volume Information`, etc. |
 | `--full` | with `--tree`: full depth and all children; `--depth` and `--top` are ignored |
 | `-s, --search <PATTERN>` | search by name: regex, case-insensitive; an invalid regex falls back to a substring match. Results are capped by `-t` |
 | `-d, --duplicates` | files of equal size (duplicate candidates; contents are not compared) |
 | `--format <table\|json\|csv>` | output format (default `table`) |
+| `--json`, `--json-compact` | shortcuts for `--format json`; `--json-compact` prints JSON on a single line |
 | `-o, --output <FILE>` | write to a file (UTF-8) instead of the console |
 | `--benchmark` | per-stage timings, peak RAM and record counters, printed to **stderr** |
 
-Mode precedence when several are given: `--tree` > `--dirs` > `--duplicates` > `--search` > top files.
+Mode precedence when several are given: `--summary` > `--tree` > `--dirs` > `--duplicates` > `--search` > top files. `--min-size`, `--exclude` and `--exclude-meta` apply to every mode, including folder sizes (excluded files do not count towards them).
 
 ## Examples
 
@@ -56,6 +61,8 @@ mftree.exe C: -d -t 30 --format csv
 - `json`: array of `{"path", "size", "is_dir"}` objects, size in bytes.
 - `csv`: header `path,size,is_dir`; fields with commas or quotes are escaped.
 - With `json` and `csv`, `--tree` rows carry the full path and are in depth-first order.
+- `--summary` with `json`: one object `{"volume", "total_bytes", "used_bytes", "free_bytes", "files", "directories", "files_size_bytes", "mft_read_ms", "parse_ms", "top_root_folders": [{"path", "size"}]}`; with `csv`: `key,value` rows. Volume sizes are `null`/empty if the query fails. `mft_read_ms` is the time the pipeline spent waiting for the disk, `parse_ms` the CPU parse and merge time.
+- Only data goes to stdout; every message and error goes to stderr (`mftree: error: ...`), so `mftree.exe C: --json | jq ...` is safe.
 - To parse results, use `json`/`csv` with `-o`: stdout stays clean, and `--benchmark` output goes to stderr.
 
 ## What to know about the results
@@ -66,12 +73,14 @@ mftree.exe C: -d -t 30 --format csv
 - The volume is read live: numbers may differ slightly between runs.
 - If an item's path cannot be resolved up to the root, it contains `\?`.
 - `--tree` with a nonexistent path fails with `path not found` and exit code `2`.
+- `--summary`, `--min-size` and `--exclude*` are covered by unit tests on synthetic data but have not been run against a real volume yet.
 
 ## Exit codes
 
 - `0` — success
 - `1` — not running as administrator
-- `2` — error (invalid drive letter, not an NTFS volume, corrupt `$MFT`, read error, path not found)
+- `2` — volume or `--tree` path not found, not an NTFS volume, or invalid arguments (bad drive letter, `--min-size`, `--exclude`)
+- `3` — I/O error or corrupt `$MFT` while reading the raw volume
 
 ## Performance and volume
 
