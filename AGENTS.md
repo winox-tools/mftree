@@ -73,7 +73,7 @@ mftree.exe C: -d -t 30 --format csv
 - The volume is read live: numbers may differ slightly between runs.
 - If an item's path cannot be resolved up to the root, it contains `\?`.
 - `--tree` with a nonexistent path fails with `path not found` and exit code `2`.
-- `--summary`, `--min-size` and `--exclude*` are covered by unit tests on synthetic data but have not been run against a real volume yet.
+- `--summary`, `--min-size`, `--exclude`, `--exclude-meta`, `--json` and the exit codes were checked on a real system volume (e.g. `--exclude .git` removed all 44 `.git` paths and `--exclude "C:\Windows\*"` all 2884 paths under `C:\Windows` from a 1 MB+ listing) in addition to unit tests.
 
 ## Exit codes
 
@@ -84,7 +84,7 @@ mftree.exe C: -d -t 30 --format csv
 
 ## Performance and volume
 
-- Scanning a volume with ~3.5M MFT records takes about 1.7 s with ~270 MB peak RAM (measured on NVMe). The first run after idle can be about 0.3 s slower.
+- Scanning a volume with ~3.5M MFT records takes about 1.6 s with ~270 MB peak RAM (measured on NVMe). The first run after idle can be about 0.3 s slower.
 - `--tree --full` on a whole disk produces millions of lines: always use `-o` instead of printing to the console.
 
 # Development

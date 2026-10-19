@@ -2,7 +2,9 @@
 
 A fast CLI scanner for NTFS volumes. It reads and parses the `$MFT` (Master File Table) directly instead of walking directories with `FindFirstFile`/`FindNextFile`, so a full scan of a volume with millions of files takes a couple of seconds.
 
-On the author's machine (NVMe SSD, ~3.5M MFT records, ~2.4M named entries) a full scan takes about 1.7 s with ~270 MB peak RAM. Your numbers will vary with the disk and the system state; run with `--benchmark` to see per-stage timings.
+![mftree --top 10 on a system volume](docs/demo.gif)
+
+On the author's machine (NVMe SSD, ~3.5M MFT records, ~2.4M named entries) a full scan takes about 1.6 s with ~270 MB peak RAM. Your numbers will vary with the disk and the system state; run with `--benchmark` to see per-stage timings.
 
 ## Features
 
@@ -99,14 +101,16 @@ mftree.exe D: --min-size 1GB --exclude .git --exclude-meta -t 100 --format csv -
 
 ## Benchmark
 
-Measured on the author's machine, one NVMe system volume with ~3.5M MFT records and ~2.4M named entries:
+Measured on the author's machine, one NVMe system volume (Windows 11) with ~3.5M MFT records and ~2.1M files:
 
-| Tool | How it reads the disk | Scan time | Output |
+| Tool | How it reads the disk | Time | Output |
 |---|---|---|---|
-| mftree | `$MFT` directly | ~1.7 s (scan plus printing the top 20) | CLI, open source |
+| mftree | `$MFT` directly | **1.6 s** (median of 4 warm runs, 2.0 s cold; process start, scan and printing the top 10) | CLI, open source |
 | WizTree 4.31 | `$MFT` directly | 4.56 s (scan, builds the full GUI tree) | GUI |
+| dust 1.2.6 | recursive directory walk | 108 s (`dust -d 1 C:\`, elevated) | CLI, open source |
+| PowerShell `Get-ChildItem -Recurse` | recursive directory walk | did not finish: aborts with `The system cannot find the file specified` inside `C:\Users`; walking all other top-level folders (468k of ~2.1M files) took 127 s | scripting |
 
-The two do different amounts of work (WizTree builds a complete interactive tree), so this is a rough comparison, not a like-for-like benchmark. Numbers for directory-walking tools (PowerShell `Get-ChildItem`, `dust`, `ncdu`) have not been measured yet and are intentionally not listed.
+These are single-machine, single-session numbers, and the tools do different amounts of work (WizTree builds a complete interactive tree; mftree prints a short list), so treat them as a rough comparison rather than a rigorous benchmark. `ncdu` has no native Windows build and was not measured.
 
 ## How it works
 
